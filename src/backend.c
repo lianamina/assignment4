@@ -111,6 +111,7 @@
 
  void handle_ack(ut_socket_t *sock, ut_tcp_header_t *hdr)
  {
+  
    if (after(get_ack(hdr) - 1, sock->send_win.last_ack))
    {
      while (pthread_mutex_lock(&(sock->send_lock)) != 0)
@@ -123,6 +124,24 @@
      * Update the sender window based on the ACK field.
        * Update `last_ack`, re-allocate the sending buffer, and update the `sending_len` field.
      */
+      sock->dup_ack_count = 0;  // Reset duplicated ACK count
+
+        // Update the congestion window based on the current congestion control state
+        if (sock->cong_win < sock->slow_start_thresh) {
+            // In Slow Start: Increase the congestion window by MSS for each new ACK.
+            sock->cong_win += MSS;
+        } else {
+            // In Congestion Avoidance: Increase the congestion window by MSS^2 / cong_win.
+            sock->cong_win += MSS * (MSS / sock->cong_win);
+        }
+
+        // Update the sender window based on the ACK field
+        sock->send_win.last_ack = get_ack(hdr) - 1;
+        sock->sending_len = sock->send_win.last_write - sock->send_win.last_sent;
+
+
+
+
      pthread_mutex_unlock(&(sock->send_lock));
    }
    // Handle Duplicated ACK.
@@ -140,6 +159,16 @@
        * If the duplicated ACK count reaches 3, adjust the congestion window and slow start threshold.
        * Retransmit missing segments using Go-back-N (i.e., update the `last_sent` to `last_ack`).
        */
+
+       sock->dup_ack_count++;
+
+            // When we reach 3 duplicated ACKs, enter Fast Recovery state.
+            if (sock->dup_ack_count == 3)
+            {
+                sock->slow_start_thresh = sock->cong_win / 2;  // Halve the slow start threshold
+                sock->cong_win = sock->slow_start_thresh + 3 * MSS;  // Set congestion window to threshold + 3 * MSS
+                sock->send_win.last_sent = sock->send_win.last_ack;  // Retransmit missing segment
+            }
      }
    }
  }
@@ -160,17 +189,51 @@
    * Send an acknowledgment if the packet arrives in order:
      * Use the `send_empty` function to send the acknowledgment.
    */
+    ut_tcp_header_t *hdr = (ut_tcp_header_t *)pkt;
+    uint32_t seq = get_seq(hdr);
+    uint16_t payload_len = get_plen(hdr);
+
+     // Ensure buffer is allocated
+    if (sock->received_buf == NULL) {
+        sock->received_buf = malloc(MAX_NETWORK_BUFFER);
+        if (sock->received_buf == NULL) {
+            perror("ERROR: Memory allocation for received buffer failed");
+            return;
+        }
+    }
+
+    // Calculate the expected data position in the buffer
+    uint32_t expected_pos = seq - sock->recv_win.last_read;
+
+    // Ensure that we do not exceed the maximum buffer size
+    if (expected_pos + payload_len > MAX_NETWORK_BUFFER)
+    {
+        payload_len = MAX_NETWORK_BUFFER - expected_pos;
+    }
+
+    // Copy the payload into the buffer
+    memcpy(sock->received_buf + expected_pos, get_payload(hdr), payload_len);
+
+    // Update the receive window pointers
+    sock->recv_win.last_recv = seq + payload_len - 1;
+    sock->recv_win.next_expect = sock->recv_win.last_recv + 1;
+
+    // If the data is in order, send an ACK
+    if (seq == sock->recv_win.next_expect)
+    {
+        send_empty(sock, ACK_FLAG_MASK, false, false);
+    }
  }
 
  void handle_pkt(ut_socket_t *sock, uint8_t *pkt)
  {
-   ut_tcp_header_t *hdr = (ut_tcp_header_t *)pkt;
-   uint8_t flags = get_flags(hdr);
-   if (!sock->complete_init)
-   {
-     handle_pkt_handshake(sock, hdr);
-     return;
-   }
+    ut_tcp_header_t *hdr = (ut_tcp_header_t *)pkt;
+    uint8_t flags = get_flags(hdr);
+    if (!sock->complete_init)
+    {
+      handle_pkt_handshake(sock, hdr);
+      return;
+    }
      /*
      TODOs:
      * Handle the FIN flag.
@@ -228,6 +291,10 @@
        * Congestion control window and slow start threshold adjustment
        * Adjust the send window for retransmission of lost packets (Go-back-N)
      */
+      sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
+      sock->cong_win = MSS;
+      sock->dup_ack_count = 0;
+
    }
 
    if (len >= (ssize_t)sizeof(ut_tcp_header_t))
@@ -286,6 +353,32 @@
        * Refer to the send_empty function for guidance on creating and sending packets.
      * Update the last sent sequence number after each packet is sent.
    */
+
+    // Calculate available window size based on congestion window, advertised window, and MSS
+    uint32_t available_win = MIN(sock->cong_win, sock->send_adv_win);
+    uint32_t max_data_to_send = MIN(available_win, sock->send_win.last_write - sock->send_win.last_sent);
+
+    // Ensure we do not send more data than the window allows
+    uint32_t data_to_send = MIN(max_data_to_send, MSS);
+
+    // Iterate and send packets until the available window is consumed
+    while (data_to_send > 0)
+    {
+        uint32_t seq = sock->send_win.last_sent + 1;
+        uint32_t ack = sock->recv_win.next_expect;
+        uint16_t adv_window = MAX(MSS, MAX_NETWORK_BUFFER - sock->received_len);
+        uint8_t flags = ACK_FLAG_MASK;  // We are sending data, so set ACK flag as well
+
+        // Prepare and send the packet with the calculated sequence and acknowledgment numbers
+        send_empty(sock, flags, false, false);
+        
+        // Update last_sent and available window
+        sock->send_win.last_sent += data_to_send;
+
+        // Update the remaining data to send, adjusting for the remaining available window
+        available_win = MIN(sock->cong_win, sock->send_adv_win) - (sock->send_win.last_sent - sock->send_win.last_ack);
+        data_to_send = MIN(available_win - (sock->send_win.last_sent - sock->send_win.last_ack), MSS);
+    }
  }
 
  void send_pkts(ut_socket_t *sock)
