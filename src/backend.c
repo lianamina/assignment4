@@ -89,8 +89,24 @@
    * If the socket is a listener, it handles incoming SYN packets and ACK responses, updating the socket’s state and windows as needed.
    */
 
+    uint8_t flags = get_flags(hdr);
+    
+    if (sock->type == TCP_INITIATOR) {
+        if ((flags & SYN_FLAG_MASK) && (flags & ACK_FLAG_MASK)) {
+            sock->send_win.last_ack = get_ack(hdr) - 1;
+            sock->recv_win.next_expect = get_seq(hdr) + 1;
+            sock->complete_init = true;
+            send_empty(sock, ACK_FLAG_MASK, false, false);
+        }
+    } else if (sock->type == TCP_LISTENER) {
+        if (flags & SYN_FLAG_MASK) {
+            sock->recv_win.next_expect = get_seq(hdr) + 1;
+            send_empty(sock, SYN_FLAG_MASK | ACK_FLAG_MASK, false, false);
+        } else if (flags & ACK_FLAG_MASK) {
+            sock->complete_init = true;
+        }
+    }
 
-   
  }
 
  void handle_ack(ut_socket_t *sock, ut_tcp_header_t *hdr)
@@ -168,6 +184,22 @@
          * If the ACK is for a new sequence, update the send window and congestion control (call `handle_ack`).
      * Update the receive buffer (call `update_received_buf`).
      */
+
+      if (flags & FIN_FLAG_MASK) {
+        sock->recv_fin = true;
+        sock->recv_fin_seq = get_seq(hdr);
+        send_empty(sock, ACK_FLAG_MASK, true, false);
+      }
+    
+      if (flags & ACK_FLAG_MASK) {
+          if (get_ack(hdr) - 1 == sock->send_fin_seq) {
+              sock->fin_acked = true;
+          } else {
+              handle_ack(sock, hdr);
+          }
+      }
+    
+      update_received_buf(sock, pkt);
  }
 
  void recv_pkts(ut_socket_t *sock)
@@ -224,13 +256,17 @@
    * Implement the handshake initialization logic.
    * We provide an example of sending a SYN packet by the initiator below:
    */
-   if (sock->type == TCP_INITIATOR)
-   {
-     if (sock->send_syn)
-     {
-       send_empty(sock, SYN_FLAG_MASK, false, false);
-     }
-   }
+    if (sock->type == TCP_INITIATOR)
+    {
+      if (sock->send_syn)
+      {
+        send_empty(sock, SYN_FLAG_MASK, false, false);
+      }
+    } else if (sock->type == TCP_LISTENER) {
+        if (sock->recv_win.next_expect == 0) {
+            sock->recv_win.next_expect = 1;
+        }
+    }
  }
 
  void send_pkts_data(ut_socket_t *sock)
