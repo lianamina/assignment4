@@ -89,27 +89,44 @@
    * If the socket is a listener, it handles incoming SYN packets and ACK responses, updating the socket’s state and windows as needed.
    */
     uint8_t flags = get_flags(hdr);
+
     if (sock->type == TCP_INITIATOR) {
-        if ((flags & (SYN_FLAG_MASK | ACK_FLAG_MASK)) == (SYN_FLAG_MASK | ACK_FLAG_MASK)) {
-            sock->send_win.last_ack = get_ack(hdr) - 1;
-            sock->recv_win.next_expect = get_seq(hdr) + 1;
-            send_empty(sock, ACK_FLAG_MASK, false, false);
-            sock->complete_init = true;
-        }
+      if ((flags & SYN_FLAG_MASK) && (flags & ACK_FLAG_MASK)) {
+        sock->recv_win.next_expect = get_seq(hdr) + 1;
+        sock->recv_win.last_read = get_seq(hdr);
+
+        sock->send_win.last_ack = get_ack(hdr) - 1;
+        sock->send_win.last_sent = get_ack(hdr) - 1;
+
+        sock->complete_init = true;
+
+        // Send final ACK to complete handshake
+        send_empty(sock, ACK_FLAG_MASK, false, false);
+      }
     } else if (sock->type == TCP_LISTENER) {
-        if (flags & SYN_FLAG_MASK) {
-            sock->recv_win.next_expect = get_seq(hdr) + 1;
-            send_empty(sock, SYN_FLAG_MASK | ACK_FLAG_MASK, false, false);
-        } else if (flags & ACK_FLAG_MASK) {
-            sock->complete_init = true;
-        }
+      if (flags & SYN_FLAG_MASK) {
+        sock->recv_win.next_expect = get_seq(hdr) + 1;
+        sock->recv_win.last_read = get_seq(hdr);
+
+        sock->send_win.last_ack = get_ack(hdr) - 1;
+        sock->send_win.last_sent = sock->send_win.last_ack;
+
+        // Send SYN + ACK back
+        send_empty(sock, SYN_FLAG_MASK | ACK_FLAG_MASK, false, false);
+      } else if (flags & ACK_FLAG_MASK) {
+        sock->send_win.last_ack = get_ack(hdr) - 1;
+        sock->send_win.last_sent = sock->send_win.last_ack;
+        sock->complete_init = true;
+      }
     }
-    
+
 
  }
 
  void handle_ack(ut_socket_t *sock, ut_tcp_header_t *hdr)
  {
+    uint32_t ack = get_ack(hdr);
+
    if (after(get_ack(hdr) - 1, sock->send_win.last_ack))
    {
      while (pthread_mutex_lock(&(sock->send_lock)) != 0)
@@ -122,39 +139,73 @@
      * Update the sender window based on the ACK field.
        * Update `last_ack`, re-allocate the sending buffer, and update the `sending_len` field.
      */
-      sock->dup_ack_count = 0;
-      sock->send_win.last_ack = get_ack(hdr) - 1;
-      sock->sending_len -= (sock->send_win.last_ack - sock->send_win.last_sent);
-      sock->send_win.last_sent = sock->send_win.last_ack;
 
-     pthread_mutex_unlock(&(sock->send_lock));
+         // Reset duplicate ACK count
+        sock->dup_ack_count = 0;
+
+        // Update the congestion window based on the state
+        if (sock->cong_win < sock->slow_start_thresh)
+        {
+            // Slow start: Increase congestion window by MSS
+            sock->cong_win += MSS;
+
+            // Transition to congestion avoidance if threshold reached
+            if (sock->cong_win >= sock->slow_start_thresh)
+            {
+                sock->slow_start_thresh = sock->cong_win;
+            }
+        }
+        else
+        {
+            // Congestion avoidance: Additive increase
+            sock->cong_win += (MSS * MSS) / sock->cong_win;
+        }
+
+        // Update sender window
+        sock->send_win.last_ack = ack - 1;
+
+        // Re-allocate the sending buffer, update `sending_len`
+        uint32_t offset = ack - sock->send_win.last_sent;
+        if (offset > 0 && offset <= sock->sending_len)
+        {
+            memmove(sock->sending_buf, sock->sending_buf + offset, sock->sending_len - offset);
+            sock->sending_len -= offset;
+            sock->send_win.last_sent = ack;
+        }
+
+        pthread_mutex_unlock(&(sock->send_lock));
    }
    // Handle Duplicated ACK.
    else if (get_ack(hdr) - 1 == sock->send_win.last_ack)
    {
-    //  if (sock->dup_ack_count == 3)  // `Fast recovery` state
-    //  {
-    //    sock->cong_win += MSS;
-    //  }
-    //  else // `Slow start` or `Congestion avoidance` state
-    //  {
-    //    /*
-    //    TODOs:
-    //    * Increment the duplicated ACK count (Up to 3).
-    //    * If the duplicated ACK count reaches 3, adjust the congestion window and slow start threshold.
-    //    * Retransmit missing segments using Go-back-N (i.e., update the `last_sent` to `last_ack`).
-    //    */
-
-    if (sock->dup_ack_count < 3) {
-            sock->dup_ack_count++;
-        }
-        if (sock->dup_ack_count == 3) {
-            sock->cong_win /= 2;
-            sock->send_win.last_sent = sock->send_win.last_ack;
-        }
-
-
+     if (sock->dup_ack_count == 3)  // `Fast recovery` state
+     {
+       sock->cong_win += MSS;
      }
+     else // `Slow start` or `Congestion avoidance` state
+     {
+       /*
+       TODOs:
+       * Increment the duplicated ACK count (Up to 3).
+       * If the duplicated ACK count reaches 3, adjust the congestion window and slow start threshold.
+       * Retransmit missing segments using Go-back-N (i.e., update the `last_sent` to `last_ack`).
+       */
+        // Increment the duplicate ACK count
+        sock->dup_ack_count++;
+
+        if (sock->dup_ack_count == 3)  // Fast Recovery
+        {
+            sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
+            sock->cong_win = sock->slow_start_thresh + 3 * MSS;
+
+            // Retransmit lost packets using Go-back-N (set last_sent to last_ack)
+            sock->send_win.last_sent = sock->send_win.last_ack;
+            send_pkts_data(sock);
+        }
+        
+     }
+
+   }
    
  }
 
@@ -174,19 +225,36 @@
    * Send an acknowledgment if the packet arrives in order:
      * Use the `send_empty` function to send the acknowledgment.
    */
-    ut_tcp_header_t *hdr = (ut_tcp_header_t *)pkt;
-    uint32_t seq = get_seq(hdr);
-    uint16_t payload_len = get_plen(hdr) - sizeof(ut_tcp_header_t);
-    uint8_t *payload = pkt + sizeof(ut_tcp_header_t);
-    if (seq >= sock->recv_win.next_expect) {
-        uint32_t end_seq = seq + payload_len;
-        if (end_seq - sock->recv_win.last_read > MAX_NETWORK_BUFFER) {
-            return;
-        }
-        memcpy(sock->received_buf + (seq - sock->recv_win.last_read), payload, payload_len);
-        sock->recv_win.next_expect = end_seq;
-        send_empty(sock, ACK_FLAG_MASK, false, false);
+
+    ut_tcp_header_t *header = (ut_tcp_header_t *)pkt;
+    uint32_t seq = get_seq(header);
+    uint32_t len = get_plen(header);
+    uint8_t *data = get_payload(pkt);
+
+    // Only accept data if it matches what we're expecting
+    if (seq != sock->recv_win.next_expect) {
+        return;  // out-of-order, drop it
     }
+
+    // Grow buffer if needed
+    sock->received_buf = realloc(sock->received_buf, sock->received_len + len);
+    if (!sock->received_buf) {
+        perror("realloc failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Copy payload into receive buffer
+    memcpy(sock->received_buf + sock->received_len, data, len);
+    sock->received_len += len;
+
+    // Advance expected sequence number
+    sock->recv_win.next_expect += len;
+
+    // Update last received seq
+    sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
+
+    // Send ACK for the new data
+    send_empty(sock, ACK_FLAG_MASK, false, false);
 
  }
 
@@ -194,6 +262,8 @@
  {
    ut_tcp_header_t *hdr = (ut_tcp_header_t *)pkt;
    uint8_t flags = get_flags(hdr);
+   uint32_t ack = get_ack(hdr);
+   uint16_t advertised_window = get_advertised_window(hdr);
    if (!sock->complete_init)
    {
      handle_pkt_handshake(sock, hdr);
@@ -213,19 +283,41 @@
      * Update the receive buffer (call `update_received_buf`).
      */
 
-     if (flags & FIN_FLAG_MASK) {
-        sock->recv_fin = true;
-        sock->recv_fin_seq = get_seq(hdr);
-        send_empty(sock, ACK_FLAG_MASK, true, false);
+     // Handle FIN
+    if (flags & FIN_FLAG_MASK) {
+      sock->recv_fin = 1;
+      sock->recv_fin_seq = get_seq(hdr);
+
+      // Send ACK for FIN
+      send_empty(sock, ACK_FLAG_MASK, true, false);
     }
+
     if (flags & ACK_FLAG_MASK) {
-        if (get_ack(hdr) == sock->send_fin_seq + 1) {
-            sock->fin_acked = true;
-        } else {
-            handle_ack(sock, hdr);
+        // Update last_ack
+        if (ack > sock->send_win.last_ack + 1) {
+            sock->send_win.last_ack = ack - 1;
+
+            // Try sending more data if window allows
+            send_pkts_data(sock);
         }
+
+        // Update send_adv_win from advertised_window
+        sock->send_adv_win = advertised_window;
     }
-    update_received_buf(sock, pkt);
+
+    if (get_plen(hdr) > 0) {
+        update_received_buf(sock, pkt);
+
+        // Send ACK with current next expected byte and advertised window
+        uint32_t adv_win = MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read);
+        send_empty(sock, ACK_FLAG_MASK, false, false);
+    }
+
+    // FIN handling if needed
+    if (flags & FIN_FLAG_MASK) {
+        sock->dying = 1;
+        send_empty(sock, ACK_FLAG_MASK, false, false);
+    }
  }
 
  void recv_pkts(ut_socket_t *sock)
@@ -254,6 +346,22 @@
        * Congestion control window and slow start threshold adjustment
        * Adjust the send window for retransmission of lost packets (Go-back-N)
      */
+
+
+        while (pthread_mutex_lock(&(sock->send_lock)) != 0) {}
+
+        // Reset duplicated ACK count
+        sock->dup_ack_count = 0;
+
+        // Reset congestion window and slow start threshold
+        sock->cong_win = MSS;
+        sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
+
+        // Retransmit missing packets (Go-back-N)
+        sock->send_win.last_sent = sock->send_win.last_ack;
+        send_pkts_data(sock);
+
+        pthread_mutex_unlock(&(sock->send_lock));
    }
 
    if (len >= (ssize_t)sizeof(ut_tcp_header_t))
@@ -282,13 +390,22 @@
    * Implement the handshake initialization logic.
    * We provide an example of sending a SYN packet by the initiator below:
    */
-   if (sock->type == TCP_INITIATOR)
-   {
-     if (sock->send_syn)
-     {
-       send_empty(sock, SYN_FLAG_MASK, false, false);
-     }
-   }
+    if (sock->complete_init) {
+      // Handshake already complete, nothing to send
+      return;
+    }
+
+    if (sock->type == TCP_INITIATOR) {
+      if (sock->send_syn && sock->send_win.last_sent == -1) {
+        // Send initial SYN
+        send_empty(sock, SYN_FLAG_MASK, false, false);
+      }
+      // Waits for SYN+ACK and then sends ACK handled in handle_pkt_handshake()
+    }
+    else if (sock->type == TCP_LISTENER) {
+      // Listener passively waits — all responses triggered in handle_pkt_handshake()
+      // No need to send anything actively here
+    }
  }
 
  void send_pkts_data(ut_socket_t *sock)
@@ -309,16 +426,34 @@
      * Update the last sent sequence number after each packet is sent.
    */
 
-   uint32_t avail_win = MIN(sock->cong_win, sock->send_win.last_sent) - 
-                     (sock->send_win.last_sent - sock->send_win.last_ack);
+   // Calculate the available window size
+    // uint32_t available_window = MIN(sock->cong_win, sock->send_adv_win);
+    // available_window = MIN(available_window, MAX_NETWORK_BUFFER - sock->sending_len);
 
-    while (avail_win > 0 && sock->sending_len > 0) {
-        uint16_t payload_len = MIN(MSS, avail_win);
+    uint32_t window = MIN(sock->cong_win, sock->send_adv_win);
+    uint32_t unacked = sock->send_win.last_sent - sock->send_win.last_ack;
+    uint32_t can_send = window > unacked ? window - unacked : 0;
+
+
+    // Send data as long as there's space in the window
+    while (can_send > 0 && sock->sending_len > 0)
+    {
+        // Calculate how much data we can send in this packet
+        uint32_t to_send = MIN(can_send, MSS);
+        // Create a packet to send based on the available window
+        uint32_t seq = sock->send_win.last_sent + 1;
+        uint32_t ack = sock->recv_win.next_expect;
+
+        // Send packet with the appropriate sequence and acknowledgment numbers
         send_empty(sock, ACK_FLAG_MASK, false, false);
-        sock->send_win.last_sent += payload_len;
-        avail_win -= payload_len;
+        sock->send_win.last_sent = seq;
+
+        // Adjust the sending buffer after sending a packet
+        sock->sending_len += MSS;
     }
+    
  }
+ 
 
  void send_pkts(ut_socket_t *sock)
  {
