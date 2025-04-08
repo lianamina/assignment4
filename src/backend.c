@@ -109,7 +109,7 @@
             sock->send_adv_win = get_advertised_window(hdr);
 
             // Mark handshake complete
-            sock->complete_init = true;
+            //sock->complete_init = true;
             fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
 
             // Send final ACK to complete handshake
@@ -460,9 +460,6 @@
     //   // Handshake already complete, nothing to send
     //   return;
     // }
-
-    // NOT GETTING HERE
-    fprintf(stderr, "here\n");
 
     if (sock->type == TCP_INITIATOR) {
       if (sock->send_syn) {
