@@ -92,59 +92,69 @@
     fprintf(stderr, "[HANDSHAKE] flags: %02x, type: %d\n", flags, sock->type);
 
     if (sock->type == TCP_INITIATOR) {
-      if ((flags & SYN_FLAG_MASK) && (flags & ACK_FLAG_MASK)) {
+        if ((flags & SYN_FLAG_MASK) && (flags & ACK_FLAG_MASK)) {
+            fprintf(stderr, "[HANDSHAKE] Initiator received SYN-ACK. Updating state...\n");
 
-        fprintf(stderr, "[HANDSHAKE] Initiator received SYN-ACK. Updating state...\n");
+            // Receive window setup
+            sock->recv_win.last_read = get_seq(hdr);
+            sock->recv_win.next_expect = get_seq(hdr) + 1;
+            sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
 
-        sock->recv_win.next_expect = get_seq(hdr) + 1;
-        sock->recv_win.last_read = get_seq(hdr);
+            // Send window setup
+            sock->send_win.last_ack = get_ack(hdr) - 1;
+            sock->send_win.last_sent = sock->send_win.last_ack;
+            sock->send_win.last_write = sock->send_win.last_sent + 1;
 
-        sock->send_win.last_ack = get_ack(hdr);
-        sock->send_win.last_sent = get_ack(hdr) - 1;
+            // Flow control: update advertised window
+            sock->send_adv_win = get_advertised_window(hdr);
 
-        sock->send_win.last_write = sock->send_win.last_sent + 1;
+            // Mark handshake complete
+            sock->complete_init = true;
+            fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
 
-        sock->send_adv_win = get_advertised_window(hdr);
+            // Send final ACK to complete handshake
+            send_empty(sock, ACK_FLAG_MASK, false, false);
+        }
 
-        sock->complete_init = true;
-        fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
-
-        // Send final ACK to complete handshake
-        send_empty(sock, ACK_FLAG_MASK, false, false);
-      }
     } else if (sock->type == TCP_LISTENER) {
-      if (flags & SYN_FLAG_MASK) {
-        fprintf(stderr, "[HANDSHAKE] Listener received SYN. Sending SYN-ACK...\n");
-        sock->recv_win.next_expect = get_seq(hdr) + 1;
-        sock->recv_win.last_read = get_seq(hdr);
 
-        sock->send_win.last_ack = 0;
-        sock->send_win.last_sent = sock->send_win.last_ack;
-        sock->send_win.last_write = sock->send_win.last_sent + 1;
+        // Case 1: Received SYN, respond with SYN-ACK
+        if (flags == SYN_FLAG_MASK) {
+            fprintf(stderr, "[HANDSHAKE] Listener received SYN. Sending SYN-ACK...\n");
 
-        // Save peer's advertised window
-        sock->send_adv_win = get_advertised_window(hdr);
+            // Receive window setup
+            sock->recv_win.last_read = get_seq(hdr);
+            sock->recv_win.next_expect = get_seq(hdr) + 1;
+            sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
+            fprintf(stderr, "[HANDSHAKE] Set next_expect = %u\n", sock->recv_win.next_expect);
 
-        // Send SYN + ACK back
-        send_empty(sock, SYN_FLAG_MASK | ACK_FLAG_MASK, false, false);
+            // Send window setup
+            sock->send_win.last_ack = get_ack(hdr) - 1;
+            sock->send_win.last_sent = get_ack(hdr) - 1;
+            // sock->send_win.last_write = 1;
 
-      } else if (flags & ACK_FLAG_MASK) {
-        fprintf(stderr, "[HANDSHAKE] Listener received ACK. Handshake complete.\n");
-        sock->send_win.last_ack = get_ack(hdr);
-        sock->send_win.last_sent = sock->send_win.last_ack;
-        sock->send_win.last_write = sock->send_win.last_sent + 1;
+            // Flow control
+            sock->send_adv_win = get_advertised_window(hdr);
+            send_empty(sock, SYN_FLAG_MASK | ACK_FLAG_MASK, false, false);
+        }
 
-        // Update advertised window
-        sock->send_adv_win = get_advertised_window(hdr);
+        // Case 2: Received ACK to complete handshake
+        else if ((flags & ACK_FLAG_MASK) && !(flags & SYN_FLAG_MASK)) {
+            fprintf(stderr, "[HANDSHAKE] Listener received ACK. Handshake complete.\n");
 
-        sock->complete_init = true;
-        fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
+            // Update send window
+            sock->send_win.last_ack = get_ack(hdr) - 1;
+            sock->send_win.last_sent = sock->send_win.last_ack;
+            sock->send_win.last_write = sock->send_win.last_sent + 1;
 
-        // FIX: Update expected receive seq number
-        sock->recv_win.last_recv = get_seq(hdr);
-        //sock->recv_win.next_expect = sock->recv_win.last_recv + 1;
-        fprintf(stderr, "[HANDSHAKE] Set recv_win.last_recv = %u\n", sock->recv_win.last_recv);
-      }
+            // Flow control
+            sock->send_adv_win = get_advertised_window(hdr);
+
+            // do not recv_win.next_expect here, it was set during SYN
+
+            sock->complete_init = true;
+            fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
+        }
     }
 
  }
@@ -340,27 +350,26 @@
     sock->send_adv_win = advertised_window;
 
     if (flags & ACK_FLAG_MASK) {
-       
+       // CHANGE? send_fin_seq?
         // Case 1: ACK after sending FIN
-        if (sock->recv_fin && ack == sock->send_fin_seq + 1) {
+        if (sock->recv_fin == 1 && ack == sock->send_win.last_sent + 1) {
             fprintf(stderr, "[HANDLE_PKT] Received ACK for our FIN\n");
             sock->fin_acked = 1;
         }
         // Case 2: ACK for data
         else if (ack > sock->send_win.last_ack) {
-            handle_ack(sock, ack);
-        } else if (ack == sock->send_win.last_ack) {
+            handle_ack(sock, hdr);
+        }
+        // Fast retransmit logic
+        else if (ack == sock->send_win.last_ack) {
             // Duplicate ACK handling
             sock->dup_ack_count++;
             if (sock->dup_ack_count == 3) {
-                // Fast retransmit
                 fprintf(stderr, "[HANDLE_PKT] Fast retransmit triggered\n");
                 // TODO: Implement fast retransmit logic
             }
 
         }
-
-
 
     }
 
@@ -368,8 +377,8 @@
         update_received_buf(sock, pkt);
 
         // Send ACK with current next expected byte and advertised window
-        uint32_t adv_win = MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read);
-        send_empty(sock, ACK_FLAG_MASK, false, false);
+        //uint32_t adv_win = MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read);
+        //send_empty(sock, ACK_FLAG_MASK, false, false);
     }
  }
 
@@ -447,10 +456,10 @@
    * Implement the handshake initialization logic.
    * We provide an example of sending a SYN packet by the initiator below:
    */
-    if (sock->complete_init) {
-      // Handshake already complete, nothing to send
-      return;
-    }
+    // if (sock->complete_init) {
+    //   // Handshake already complete, nothing to send
+    //   return;
+    // }
 
     if (sock->type == TCP_INITIATOR) {
       if (sock->send_syn && sock->send_win.last_sent == -1) {
