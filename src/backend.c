@@ -139,9 +139,13 @@
 
         sock->complete_init = true;
         fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
+
+        // FIX: Update expected receive seq number
+        sock->recv_win.last_recv = get_seq(hdr);
+        //sock->recv_win.next_expect = sock->recv_win.last_recv + 1;
+        fprintf(stderr, "[HANDSHAKE] Set recv_win.last_recv = %u\n", sock->recv_win.last_recv);
       }
     }
-
 
  }
 
@@ -289,20 +293,13 @@
  void handle_pkt(ut_socket_t *sock, uint8_t *pkt)
  {
 
-  // Check for NULL pointers early
+  // Check for NULL pointers
     if (sock == NULL || pkt == NULL) {
         fprintf(stderr, "[ERROR] NULL pointer received in handle_pkt.\n");
         return;
     }
 
    ut_tcp_header_t *hdr = (ut_tcp_header_t *)pkt;
-
-  // Check for valid header (it could be corrupted or invalid)
-    if (hdr == NULL) {
-        fprintf(stderr, "[ERROR] Invalid TCP header.\n");
-        return;
-    }
-
    uint8_t flags = get_flags(hdr);
    uint32_t ack = get_ack(hdr);
    uint16_t advertised_window = get_advertised_window(hdr);
@@ -343,27 +340,7 @@
     sock->send_adv_win = advertised_window;
 
     if (flags & ACK_FLAG_MASK) {
-        // // Update last_ack
-        // if (ack > sock->send_win.last_ack + 1) {
-        //     sock->send_win.last_ack = ack - 1;
-
-        //     // Try sending more data if window allows
-        //     send_pkts_data(sock);
-        // }
-
-        // // Update send_adv_win from advertised_window
-        // sock->send_adv_win = advertised_window;
-
-        // Case 1: ACK after sending FIN
-        // if (sock->sent_fin && ack == sock->sent_fin_seq + 1) {
-        //     fprintf(stderr, "[HANDLE_PKT] Received ACK for our FIN\n");
-        //     sock->fin_acked = 1;
-        // }
-        // // Case 2: ACK for data
-        // else if (ack > sock->send_win.last_ack) {
-        //     handle_ack(sock, ack);
-        // }
-
+       
         // Case 1: ACK after sending FIN
         if (sock->recv_fin && ack == sock->send_fin_seq + 1) {
             fprintf(stderr, "[HANDLE_PKT] Received ACK for our FIN\n");
@@ -394,34 +371,6 @@
         uint32_t adv_win = MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read);
         send_empty(sock, ACK_FLAG_MASK, false, false);
     }
-
-    // Sequence number mismatch handling
-    // uint32_t seq = get_seq(hdr);
-    // if (sock->recv_win.next_expect < seq) {
-    //     fprintf(stderr, "[HANDLE_PKT] Sequence number mismatch. Resetting sequence numbers...\n");
-
-    //     // Ensure the expected sequence number and other fields are properly reset
-    //     sock->recv_win.next_expect = seq;
-
-    //     // Reset sending window to the last acknowledged sequence number (if it’s valid)
-    //     if (sock->send_win.last_ack != UINT32_MAX) {
-    //         sock->send_win.last_sent = sock->send_win.last_ack;
-    //     } else {
-    //         fprintf(stderr, "[WARNING] Invalid value for last_ack. Skipping reset.\n");
-    //     }
-
-    //     // Reset buffer and duplicate ACK count
-    //     sock->sending_len = 0;
-    //     sock->dup_ack_count = 0;
-    // }
-
-    
-
-    // // FIN handling if needed
-    // if (flags & FIN_FLAG_MASK) {
-    //     sock->dying = 1;
-    //     send_empty(sock, ACK_FLAG_MASK, false, false);
-    // }
  }
 
  void recv_pkts(ut_socket_t *sock)
@@ -534,10 +483,6 @@
      * Update the last sent sequence number after each packet is sent.
    */
 
-   // Calculate the available window size
-    // uint32_t available_window = MIN(sock->cong_win, sock->send_adv_win);
-    // available_window = MIN(available_window, MAX_NETWORK_BUFFER - sock->sending_len);
-    
 
 
     uint32_t window = MIN(sock->cong_win, sock->send_adv_win);
@@ -644,4 +589,3 @@
    pthread_exit(NULL);
    return NULL;
  }
-
