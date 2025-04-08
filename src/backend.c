@@ -461,9 +461,13 @@
     //   return;
     // }
 
+    // NOT GETTING HERE
+    fprintf(stderr, "here\n");
+
     if (sock->type == TCP_INITIATOR) {
-      if (sock->send_syn && sock->send_win.last_sent == -1) {
+      if (sock->send_syn) {
         // Send initial SYN
+        fprintf(stderr, "[SEND_PKTS] Sending packets, initial SYN\n");
         send_empty(sock, SYN_FLAG_MASK, false, false);
       }
       // Waits for SYN+ACK and then sends ACK handled in handle_pkt_handshake()
@@ -538,6 +542,7 @@
 
  void send_pkts(ut_socket_t *sock)
  {
+  // GETTING HERE
    if (!sock->complete_init)
    {
      send_pkts_handshake(sock);
