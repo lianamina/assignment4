@@ -494,35 +494,43 @@
    */
 
 
-
+    sock->send_adv_win = MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read);
     uint32_t window = MIN(sock->cong_win, sock->send_adv_win);
     //uint32_t unacked = sock->send_win.last_sent - sock->send_win.last_ack;
     // uint32_t can_send = window > unacked ? window - unacked : 0;
 
-    if (sock->send_win.last_write > sock->send_win.last_ack) {
-        uint32_t available_data = sock->send_win.last_write - sock->send_win.last_sent;
-        window = MIN(window, available_data);
-    } else {
-        return; // Nothing to send
-    }
+
+
+    // if (sock->send_win.last_write > sock->send_win.last_ack) {
+    //     uint32_t available_data = sock->send_win.last_write - sock->send_win.last_ack;
+    //     window = MIN(window, available_data);
+    // } else {
+    //     return; // Nothing to send
+    // }
+
+    uint32_t in_flight = sock->send_win.last_sent - sock->send_win.last_ack;
+
+    // Determine the number of bytes we are allowed to send
+    window = window > in_flight ? window - in_flight : 0;
 
     fprintf(stderr, "[SEND_DATA] Can send: %u bytes, sending_len: %u\n", window, sock->sending_len);
 
+    
+
 
     // Send data as long as there's space in the window
-    while (window > 0)
+    while (window > 0 && sock->send_win.last_sent < sock->send_win.last_write)
     {
         fprintf(stderr, "in while loop\n");
 
+        uint32_t unsent_bytes = sock->send_win.last_write - sock->send_win.last_sent;
+
         // Calculate how much data we can send in this packet
-        uint32_t to_send = MIN(window, MIN(MSS, sock->sending_len));
+        uint32_t to_send = MIN(unsent_bytes, MIN(window, MSS));
 
         // Create a packet to send based on the available window
         uint32_t seq = sock->send_win.last_sent + 1;
         uint32_t ack = sock->recv_win.next_expect;
-
-
-        //SEND EMPTY CODE STARTS
 
 
         size_t conn_len = sizeof(sock->conn);
@@ -531,59 +539,41 @@
         uint16_t src = sock->my_port;
         uint16_t dst = ntohs(sock->conn.sin_port);
 
-        // uint32_t seq = sock->send_win.last_sent + 1;
-        // if (send_fin)
-        // {
-        //   seq = sock->send_fin_seq;
-        // }
-        // uint32_t ack = sock->recv_win.next_expect;
-        // if (fin_ack)
-        // {
-        //   ack++;
-        // }
 
         // be updating sending len somewhere
         // use sending_len to terminate process (everytime you send something), update when you receive ACK
         // last write - last ack
 
-        // be updaying received len somewhere (REPLACE)
+        // be updating received len somewhere (REPLACE)
         uint16_t adv_window = MAX(MSS, MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read));
 
-        // null or ack for flags?
+        
         uint16_t hlen = sizeof(ut_tcp_header_t);
         uint8_t flags = ACK_FLAG_MASK;
-
-
-        uint32_t max_payload = MIN(window, MSS - hlen);
-        uint8_t data[max_payload];
-        uint16_t actual_len = ut_read(sock, &sock->sending_buf, data, max_payload);
-
-        if (actual_len == 0) {
-            break;
-        }
-
-        uint16_t plen = hlen + actual_len;
       
-        // change to actual packet we want to send to sending buffer
-        // uint16_t payload_len = 0;
-        // uint8_t *payload = &flags;
-        // uint16_t plen = hlen + payload_len;
+        //change to actual packet we want to send to sending buffer
+
+        uint16_t payload_len = to_send;
+        sock->sending_buf = malloc(payload_len);
+        uint8_t *payload = sock->sending_buf;
+        uint16_t plen = hlen + payload_len;
+
+        fprintf(stderr, "[CREATE] To send: %u bytes, window: %u\n",to_send, window);
 
         uint8_t *msg = create_packet(
-            src, dst, seq, ack, hlen, plen, flags, adv_window, max_payload, actual_len);
+            src, dst, seq, ack, hlen, plen, flags, adv_window, payload, payload_len);
+
         sendto(sockfd, msg, plen, 0, (struct sockaddr *)&(sock->conn), conn_len);
         free(msg);
 
 
-        fprintf(stderr, "[SEND_DATA] Sending data seq=%u, len=%u\n", seq, to_send);
-
-        
-        // Send packet with the appropriate sequence and acknowledgment numbers
-        //send_empty(sock, ACK_FLAG_MASK, false, false);
-        sock->send_win.last_sent = to_send;
+        fprintf(stderr, "[SEND_DATA] Sending data seq=%u, len=%u\n", seq, payload_len);
 
         // Adjust the sending buffer after sending a packet
+        sock->send_win.last_sent += to_send;
         window -= to_send;
+        //sock->sending_len -= to_send;
+        //sock->sending_buf += to_send;
 
     }
     
