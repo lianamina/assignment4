@@ -158,7 +158,7 @@
             // do not recv_win.next_expect here, it was set during SYN
 
             //sock->complete_init = true;
-            //fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
+            fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
         }
     }
 
@@ -349,6 +349,7 @@
     sock->send_adv_win = advertised_window;
 
     if (flags & ACK_FLAG_MASK) {
+       // CHANGE? send_fin_seq?
         // Case 1: ACK after sending FIN
         if (sock->recv_fin == 1 && ack == sock->send_win.last_sent + 1) {
             fprintf(stderr, "[HANDLE_PKT] Received ACK for our FIN\n");
