@@ -99,7 +99,7 @@
             // Receive window setup
             sock->recv_win.last_read = get_seq(hdr);
             sock->recv_win.next_expect = get_seq(hdr) + 1;
-            sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
+            sock->recv_win.last_recv = get_seq(hdr);
 
             // Send window setup
             sock->send_win.last_ack = get_ack(hdr) - 1;
@@ -129,7 +129,7 @@
             // Receive window setup
             sock->recv_win.last_read = get_seq(hdr);
             sock->recv_win.next_expect = get_seq(hdr) + 1;
-            sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
+            sock->recv_win.last_recv = get_seq(hdr);
             fprintf(stderr, "[HANDSHAKE] Set next_expect = %u\n", sock->recv_win.next_expect);
 
             // Send window setup
@@ -282,15 +282,6 @@
 
     if (len == 0) return;
 
-    // fprintf(stderr, "[RECV_BUF] Payload content: ");
-    // for (int i = 0; i < len; i++) {
-    //     fprintf(stderr, "%c", data[i]); // Or %02x for hex
-    // }
-    // fprintf(stderr, "\n");
-
-    //sock->received_len = len;
-
-
     fprintf(stderr, "[RECV_BUF] Received pkt seq=%u, len=%u, expected=%u\n", seq, len, sock->recv_win.next_expect);
 
     // Only accept data if it matches what we're expecting
@@ -309,17 +300,13 @@
     memcpy(sock->received_buf + sock->received_len, data, len);
     sock->received_len += len;
 
-    // fprintf(stderr, "[RECV_BUF] Buffer after copy: ");
-    // for (int i = 0; i < sock->received_len; i++) {
-    //     fprintf(stderr, "%c", sock->received_buf[i]); // Or %02x
-    // }
-    // fprintf(stderr, "\n");
-
     // Advance expected sequence number
     sock->recv_win.next_expect += len;
 
     // Update last received seq
     sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
+
+    fprintf(stderr, "[RECV_BUF] Allocating receive buffer of size %u\n", sock->received_len + len);
 
 
     // Send ACK for the new data
