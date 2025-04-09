@@ -157,7 +157,7 @@
 
             // do not recv_win.next_expect here, it was set during SYN
 
-            //sock->complete_init = true;
+            sock->complete_init = true;
             fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
         }
     }
@@ -523,15 +523,12 @@
 
     uint32_t window = MIN(sock->cong_win, sock->send_adv_win);
 
-    // if (sock->send_win.last_write > sock->send_win.last_ack) {
-    //     // uint32_t available_data = sock->send_win.last_write - sock->send_win.last_ack;
-    //     window = MIN(window, sock->sending_len);
-    // } else {
-    //     return; // Nothing to send
-    // }
-
-    // subtract from window??
-
+    if (sock->send_win.last_write > sock->send_win.last_sent) {
+        uint32_t available_data = sock->send_win.last_write - sock->send_win.last_sent;
+        window = MIN(window, available_data);
+    } else {
+        return; // Nothing to send
+    }
     
     //use sending_len to terminate process (everytime you send something), update when you receive ACK
     // last write - last ack
@@ -541,7 +538,7 @@
 
 
     // Send data as long as there's space in the window
-    while (window > 0 && sock->send_win.last_sent < sock->send_win.last_write)
+    while (window > 0)
     {
         fprintf(stderr, "in while loop\n");
 
@@ -550,8 +547,10 @@
 
         //fprintf(stderr, "[MIN] unsent: %u bytes, window: %u, MSS: %u\n", unsent_bytes, window, MSS);
         // Calculate how much data we can send in this packet
+        
         uint32_t to_send = MIN(sock->sending_len, MSS);
 
+        // comment out to keep looping
         if (to_send == 0) break;
 
         // Create a packet to send based on the available window
@@ -608,6 +607,8 @@
             sock->sending_len = 0;
         }
         //sock->sending_buf += to_send;
+
+        fprintf(stderr, "End of while loop, window: %u\n", window);
 
     }
     
