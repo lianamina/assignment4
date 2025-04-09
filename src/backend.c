@@ -281,7 +281,13 @@
 
     if (len == 0) return;
 
-    sock->received_len = len;
+    fprintf(stderr, "[RECV_BUF] Payload content: ");
+    for (int i = 0; i < len; i++) {
+        fprintf(stderr, "%c", data[i]); // Or %02x for hex
+    }
+    fprintf(stderr, "\n");
+
+    //sock->received_len = len;
 
 
     fprintf(stderr, "[RECV_BUF] Received pkt seq=%u, len=%u, expected=%u\n", seq, len, sock->recv_win.next_expect);
@@ -294,20 +300,26 @@
 
     // Grow buffer if needed
     sock->received_buf = realloc(sock->received_buf, sock->received_len + len);
-    if (!sock->received_buf) {
-        perror("realloc failed");
-        exit(EXIT_FAILURE);
-    }
+
+    fprintf(stderr, "[RECV_BUF] Allocating receive buffer of size %u\n", sock->received_len + len);
+
 
     // Copy payload into receive buffer
     memcpy(sock->received_buf + sock->received_len, data, len);
     sock->received_len += len;
+
+    fprintf(stderr, "[RECV_BUF] Buffer after copy: ");
+    for (int i = 0; i < sock->received_len; i++) {
+        fprintf(stderr, "%c", sock->received_buf[i]); // Or %02x
+    }
+    fprintf(stderr, "\n");
 
     // Advance expected sequence number
     sock->recv_win.next_expect += len;
 
     // Update last received seq
     sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
+
 
     // Send ACK for the new data
     send_empty(sock, ACK_FLAG_MASK, false, false);
@@ -386,14 +398,15 @@
 
     }
 
-    if (get_plen(hdr) > 0) {
-        update_received_buf(sock, pkt);
-    }
+    
+    update_received_buf(sock, pkt);
+    
  }
 
  void recv_pkts(ut_socket_t *sock)
  {
     
+    fprintf(stderr, "In recv_pkts");
    ut_tcp_header_t hdr;
    uint8_t *pkt;
    socklen_t conn_len = sizeof(sock->conn);
@@ -420,22 +433,23 @@
      */
 
      
+     // PART 3 CODE
 
 
-        while (pthread_mutex_lock(&(sock->send_lock)) != 0) {}
+        // while (pthread_mutex_lock(&(sock->send_lock)) != 0) {}
 
-        // Reset duplicated ACK count
-        sock->dup_ack_count = 0;
+        // // Reset duplicated ACK count
+        // sock->dup_ack_count = 0;
 
-        // Reset congestion window and slow start threshold
-        sock->cong_win = MSS;
-        sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
+        // // Reset congestion window and slow start threshold
+        // sock->cong_win = MSS;
+        // sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
 
-        // Retransmit missing packets (Go-back-N)
-        sock->send_win.last_sent = sock->send_win.last_ack;
-        send_pkts_data(sock);
+        // // Retransmit missing packets (Go-back-N)
+        // sock->send_win.last_sent = sock->send_win.last_ack;
+        // send_pkts_data(sock);
 
-        pthread_mutex_unlock(&(sock->send_lock));
+        // pthread_mutex_unlock(&(sock->send_lock));
    }
 
    if (len >= (ssize_t)sizeof(ut_tcp_header_t))
@@ -457,6 +471,8 @@
      free(pkt);
    }
  }
+
+
 
  void send_pkts_handshake(ut_socket_t *sock)
  {
@@ -504,25 +520,19 @@
 
 
     sock->send_adv_win = MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read);
+
     uint32_t window = MIN(sock->cong_win, sock->send_adv_win);
-    //uint32_t unacked = sock->send_win.last_sent - sock->send_win.last_ack;
-    // uint32_t can_send = window > unacked ? window - unacked : 0;
 
+    // if (sock->send_win.last_write > sock->send_win.last_ack) {
+    //     // uint32_t available_data = sock->send_win.last_write - sock->send_win.last_ack;
+    //     window = MIN(window, sock->sending_len);
+    // } else {
+    //     return; // Nothing to send
+    // }
 
+    // subtract from window??
 
-    if (sock->send_win.last_write > sock->send_win.last_ack) {
-        uint32_t available_data = sock->send_win.last_write - sock->send_win.last_ack;
-        window = MIN(window, sock->sending_len);
-    } else {
-        return; // Nothing to send
-    }
-
-    //uint32_t in_flight = sock->send_win.last_sent - sock->send_win.last_ack;
-
-    // Determine the number of bytes we are allowed to send
-    //window = window > in_flight ? window - in_flight : 0;
-
-    // SENDING LEN ALWAYS 0, SHOULDN't BE
+    
     //use sending_len to terminate process (everytime you send something), update when you receive ACK
     // last write - last ack
     fprintf(stderr, "[SEND_DATA] Can send: %u bytes, sending_len: %u\n", window, sock->sending_len);
@@ -536,10 +546,11 @@
         fprintf(stderr, "in while loop\n");
 
         // ALWAYS 1 SHOULDN'T BE
-        uint32_t unsent_bytes = sock->send_win.last_write - sock->send_win.last_sent;
+        //uint32_t unsent_bytes = sock->send_win.last_write - sock->send_win.last_sent;
 
+        //fprintf(stderr, "[MIN] unsent: %u bytes, window: %u, MSS: %u\n", unsent_bytes, window, MSS);
         // Calculate how much data we can send in this packet
-        uint32_t to_send = MIN(unsent_bytes, MIN(window, MSS));
+        uint32_t to_send = MIN(sock->sending_len, MSS);
 
         if (to_send == 0) break;
 
@@ -555,18 +566,13 @@
         uint16_t dst = ntohs(sock->conn.sin_port);
 
 
-        // be updating sending len somewhere
-
         // be updating received len somewhere (REPLACE)
         //fprintf(stderr, "[REC LEN] Can send: %u bytes, received_len: %u\n", window, sock->received_len);
 
         uint16_t adv_window = MAX(MSS, MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read));
-
-        
         uint16_t hlen = sizeof(ut_tcp_header_t);
         uint8_t flags = ACK_FLAG_MASK;
       
-        
         // actual packet we want to send to sending buffer
         uint16_t payload_len = to_send;
         sock->sending_buf = malloc(payload_len);
@@ -604,6 +610,7 @@
         //sock->sending_buf += to_send;
 
     }
+    
     
  }
  
