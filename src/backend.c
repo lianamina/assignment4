@@ -47,6 +47,7 @@
    uint16_t payload_len = 0;
    uint8_t *payload = &flags;
    uint16_t plen = hlen + payload_len;
+   fprintf(stderr, "[DEBUG] send_empty flags: 0x%x\n", flags);
 
    uint8_t *msg = create_packet(
        src, dst, seq, ack, hlen, plen, flags, adv_window, payload, payload_len);
@@ -108,12 +109,14 @@
             // Flow control: update advertised window
             sock->send_adv_win = get_advertised_window(hdr);
 
-            // Mark handshake complete
-            //sock->complete_init = true;
+            
             //fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
 
             // Send final ACK to complete handshake
             send_empty(sock, ACK_FLAG_MASK, false, false);
+
+            // Mark handshake complete
+            sock->complete_init = true;
         }
 
     } else if (sock->type == TCP_LISTENER) {
@@ -136,6 +139,8 @@
             // Flow control
             sock->send_adv_win = get_advertised_window(hdr);
             send_empty(sock, SYN_FLAG_MASK | ACK_FLAG_MASK, false, false);
+            //sock->complete_init = true;
+
         }
 
         // Case 2: Received ACK to complete handshake
@@ -152,8 +157,8 @@
 
             // do not recv_win.next_expect here, it was set during SYN
 
-            sock->complete_init = true;
-            fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
+            //sock->complete_init = true;
+            //fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
         }
     }
 
@@ -303,12 +308,6 @@
  void handle_pkt(ut_socket_t *sock, uint8_t *pkt)
  {
 
-  // Check for NULL pointers
-    if (sock == NULL || pkt == NULL) {
-        fprintf(stderr, "[ERROR] NULL pointer received in handle_pkt.\n");
-        return;
-    }
-
    ut_tcp_header_t *hdr = (ut_tcp_header_t *)pkt;
    uint8_t flags = get_flags(hdr);
    uint32_t ack = get_ack(hdr);
@@ -350,7 +349,6 @@
     sock->send_adv_win = advertised_window;
 
     if (flags & ACK_FLAG_MASK) {
-       // CHANGE? send_fin_seq?
         // Case 1: ACK after sending FIN
         if (sock->recv_fin == 1 && ack == sock->send_win.last_sent + 1) {
             fprintf(stderr, "[HANDLE_PKT] Received ACK for our FIN\n");
@@ -456,10 +454,10 @@
    * Implement the handshake initialization logic.
    * We provide an example of sending a SYN packet by the initiator below:
    */
-    // if (sock->complete_init) {
-    //   // Handshake already complete, nothing to send
-    //   return;
-    // }
+    if (sock->complete_init) {
+      // Handshake already complete, nothing to send
+      return;
+    }
 
     if (sock->type == TCP_INITIATOR) {
       if (sock->send_syn) {
@@ -513,6 +511,9 @@
     // Determine the number of bytes we are allowed to send
     window = window > in_flight ? window - in_flight : 0;
 
+    // SENDING LEN ALWAYS 0, SHOULDN't BE
+    //use sending_len to terminate process (everytime you send something), update when you receive ACK
+    // last write - last ack
     fprintf(stderr, "[SEND_DATA] Can send: %u bytes, sending_len: %u\n", window, sock->sending_len);
 
     
@@ -523,6 +524,7 @@
     {
         fprintf(stderr, "in while loop\n");
 
+        // ALWAYS 1 SHOULDN'T BE
         uint32_t unsent_bytes = sock->send_win.last_write - sock->send_win.last_sent;
 
         // Calculate how much data we can send in this packet
@@ -541,24 +543,24 @@
 
 
         // be updating sending len somewhere
-        // use sending_len to terminate process (everytime you send something), update when you receive ACK
-        // last write - last ack
 
         // be updating received len somewhere (REPLACE)
+        //fprintf(stderr, "[REC LEN] Can send: %u bytes, received_len: %u\n", window, sock->received_len);
+
         uint16_t adv_window = MAX(MSS, MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read));
 
         
         uint16_t hlen = sizeof(ut_tcp_header_t);
         uint8_t flags = ACK_FLAG_MASK;
       
-        //change to actual packet we want to send to sending buffer
-
+        
+        // actual packet we want to send to sending buffer
         uint16_t payload_len = to_send;
         sock->sending_buf = malloc(payload_len);
         uint8_t *payload = sock->sending_buf;
         uint16_t plen = hlen + payload_len;
 
-        fprintf(stderr, "[CREATE] To send: %u bytes, window: %u\n",to_send, window);
+        fprintf(stderr, "[CREATE] To send: %u bytes, window: %u\n", to_send, window);
 
         uint8_t *msg = create_packet(
             src, dst, seq, ack, hlen, plen, flags, adv_window, payload, payload_len);
