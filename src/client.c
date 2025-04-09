@@ -19,6 +19,7 @@ void functionality(ut_socket_t *sock) {
   FILE *fp;
 
   ut_write(sock, "Knock knock", 11);
+
   read = ut_read(sock, buf, 200, NO_FLAG);
   printf("R: %.*s\n", read, buf);
   printf("N: %d\n", read);

@@ -27,6 +27,7 @@ void functionality(ut_socket_t *sock, int file_size_in_bytes) {
   n = ut_read(sock, buf, BUF_SIZE, NO_FLAG);
   printf("R: %.*s\n", n, buf);
   printf("N: %d\n", n);
+
   ut_write(sock, "Who's there?", 12);
 
   n = ut_read(sock, buf, 200, NO_FLAG);
