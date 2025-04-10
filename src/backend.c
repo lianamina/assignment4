@@ -90,11 +90,11 @@
    * If the socket is a listener, it handles incoming SYN packets and ACK responses, updating the socket’s state and windows as needed.
    */
     uint8_t flags = get_flags(hdr);
-    fprintf(stderr, "[HANDSHAKE] flags: %02x, type: %d\n", flags, sock->type);
+    //fprintf(stderr, "[HANDSHAKE] flags: %02x, type: %d\n", flags, sock->type);
 
     if (sock->type == TCP_INITIATOR) {
         if ((flags & SYN_FLAG_MASK) && (flags & ACK_FLAG_MASK)) {
-            fprintf(stderr, "[HANDSHAKE] Initiator received SYN-ACK. Updating state...\n");
+            //fprintf(stderr, "[HANDSHAKE] Initiator received SYN-ACK. Updating state...\n");
 
             // Receive window setup
             sock->recv_win.last_read = get_seq(hdr);
@@ -124,13 +124,13 @@
 
         // Case 1: Received SYN, respond with SYN-ACK
         if (flags == SYN_FLAG_MASK) {
-            fprintf(stderr, "[HANDSHAKE] Listener received SYN. Sending SYN-ACK...\n");
+            //fprintf(stderr, "[HANDSHAKE] Listener received SYN. Sending SYN-ACK...\n");
 
             // Receive window setup
             sock->recv_win.last_read = get_seq(hdr);
             sock->recv_win.next_expect = get_seq(hdr) + 1;
             sock->recv_win.last_recv = get_seq(hdr);
-            fprintf(stderr, "[HANDSHAKE] Set next_expect = %u\n", sock->recv_win.next_expect);
+            //fprintf(stderr, "[HANDSHAKE] Set next_expect = %u\n", sock->recv_win.next_expect);
 
             // Send window setup
             sock->send_win.last_ack = get_ack(hdr) - 1;
@@ -146,7 +146,7 @@
 
         // Case 2: Received ACK to complete handshake
         else if ((flags & ACK_FLAG_MASK) && !(flags & SYN_FLAG_MASK)) {
-            fprintf(stderr, "[HANDSHAKE] Listener received ACK. Handshake complete.\n");
+            //fprintf(stderr, "[HANDSHAKE] Listener received ACK. Handshake complete.\n");
 
             // Update send window
             sock->send_win.last_ack = get_ack(hdr) - 1;
@@ -159,7 +159,7 @@
             // do not recv_win.next_expect here, it was set during SYN
 
             sock->complete_init = true;
-            fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
+            //fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
         }
     }
 
@@ -167,7 +167,7 @@
 
  void handle_ack(ut_socket_t *sock, ut_tcp_header_t *hdr)
  {
-    fprintf(stderr, "in handle ack\n");
+    //fprintf(stderr, "in handle ack\n");
     uint32_t ack = get_ack(hdr);
 
    if (after(get_ack(hdr), sock->send_win.last_ack))
@@ -195,7 +195,7 @@
             //Transition to congestion avoidance if threshold reached
             if (sock->cong_win >= sock->slow_start_thresh)
             {
-                fprintf(stderr, "[CONGESTION] Transition to Congestion Avoidance\n");
+                //fprintf(stderr, "[CONGESTION] Transition to Congestion Avoidance\n");
                 sock->slow_start_thresh = sock->cong_win;
             }
         }
@@ -246,7 +246,7 @@
       sock->dup_ack_count++;
       if (sock->dup_ack_count == 3)  // `Fast recovery` state
       {
-          fprintf(stderr, "[FAST RETRANSMIT] Triggered\n");
+          //fprintf(stderr, "[FAST RETRANSMIT] Triggered\n");
           // Fast Recovery
           sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
           sock->cong_win = sock->slow_start_thresh + 3 * MSS;
@@ -291,18 +291,17 @@
 
     if (len == 0) return;
 
-    fprintf(stderr, "[RECV_BUF] Received pkt seq=%u, len=%u, expected=%u\n", seq, len, sock->recv_win.next_expect);
+    //fprintf(stderr, "[RECV_BUF] Received pkt seq=%u, len=%u, expected=%u\n", seq, len, sock->recv_win.next_expect);
 
     // Drop if it doesn't fit in buffer
     if (sock->received_len + len > MAX_NETWORK_BUFFER) {
-        fprintf(stderr, "[RECV_BUF] Drop: Would exceed MAX_NETWORK_BUFFER\n");
+        //fprintf(stderr, "[RECV_BUF] Drop: Would exceed MAX_NETWORK_BUFFER\n");
         return;
     }
 
     // Only accept in-order packets for now
     if (seq != sock->recv_win.next_expect) {
-        fprintf(stderr, "[RECV_BUF] Dropping out-of-order packet. Expected %u but got %u\n",
-                sock->recv_win.next_expect, seq);
+        //fprintf(stderr, "[RECV_BUF] Dropping out-of-order packet. Expected %u but got %u\n", sock->recv_win.next_expect, seq);
         return;
     }
 
@@ -319,7 +318,7 @@
         exit(EXIT_FAILURE);
     }
 
-    fprintf(stderr, "[RECV_BUF] Allocating receive buffer of size %u\n", sock->received_len + len);
+    //fprintf(stderr, "[RECV_BUF] Allocating receive buffer of size %u\n", sock->received_len + len);
 
     // fprintf(stderr, "[DEBUG] payload as chars: ");
     // for (int i = 0; i < len; i++) {
@@ -340,7 +339,7 @@
     // Update last received seq
     sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
 
-    fprintf(stderr, "[RECV_BUF] Total received buffer length is now %u\n", sock->received_len);
+    //fprintf(stderr, "[RECV_BUF] Total received buffer length is now %u\n", sock->received_len);
 
     // Send ACK for the new data
     send_empty(sock, ACK_FLAG_MASK, false, false);
@@ -355,8 +354,7 @@
    uint32_t ack = get_ack(hdr);
    uint16_t advertised_window = get_advertised_window(hdr);
 
-  fprintf(stderr, "[HANDLE_PKT] flags: %02x, ack: %u, seq: %u, plen: %u\n",
-        flags, get_ack(hdr), get_seq(hdr), get_plen(hdr));
+  //fprintf(stderr, "[HANDLE_PKT] flags: %02x, ack: %u, seq: %u, plen: %u\n", flags, get_ack(hdr), get_seq(hdr), get_plen(hdr));
 
    if (!sock->complete_init)
    {
@@ -379,17 +377,17 @@
 
      // Handle FIN
     if (flags & FIN_FLAG_MASK) {
-      fprintf(stderr, "[HANDLE_PKT] Received FIN. Sending ACK...\n");
+      //fprintf(stderr, "[HANDLE_PKT] Received FIN. Sending ACK...\n");
 
       sock->recv_fin = 1;
       sock->recv_fin_seq = get_seq(hdr);
 
       // Send ACK for FIN
       send_empty(sock, ACK_FLAG_MASK, true, false);
-      fprintf(stderr, "here\n");
+      //fprintf(stderr, "here\n");
       if (sock->recv_fin = 1) {
         sock->sent_fin = 1;
-        fprintf(stderr, "[HANDLE_PKT] Server sending FIN...\n");
+        //fprintf(stderr, "[HANDLE_PKT] Server sending FIN...\n");
         send_empty(sock, FIN_FLAG_MASK, false, true);
       }
     }
@@ -399,12 +397,12 @@
     if (flags & ACK_FLAG_MASK) {
         // Case 1: ACK after sending FIN
         if (sock->sent_fin == 1) {
-            fprintf(stderr, "[HANDLE_PKT] Received ACK for our FIN\n");
+            //fprintf(stderr, "[HANDLE_PKT] Received ACK for our FIN\n");
             sock->fin_acked = 1;
         }
         // Case 2: ACK for data
         else if (ack > sock->send_win.last_ack) {
-            fprintf(stderr, "before handle ack\n");
+            //fprintf(stderr, "before handle ack\n");
             handle_ack(sock, hdr);
         }
         // Fast retransmit logic
@@ -412,7 +410,7 @@
             // Duplicate ACK handling
             sock->dup_ack_count++;
             if (sock->dup_ack_count == 3) {
-                fprintf(stderr, "[HANDLE_PKT] Fast retransmit triggered\n");
+                //fprintf(stderr, "[HANDLE_PKT] Fast retransmit triggered\n");
                 sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
                 sock->cong_win = sock->slow_start_thresh + 3 * MSS;
 
@@ -517,7 +515,7 @@
     if (sock->type == TCP_INITIATOR) {
       if (sock->send_syn) {
         // Send initial SYN
-        fprintf(stderr, "[SEND_PKTS] Sending packets, initial SYN\n");
+        //fprintf(stderr, "[SEND_PKTS] Sending packets, initial SYN\n");
         send_empty(sock, SYN_FLAG_MASK, false, false);
       }
       // Waits for SYN+ACK and then sends ACK handled in handle_pkt_handshake()
@@ -558,14 +556,14 @@
         return; // Nothing to send
     }
     
-    fprintf(stderr, "[SEND_DATA] Window: %u bytes, sending_len: %u\n", window, sock->sending_len);
+    //fprintf(stderr, "[SEND_DATA] Window: %u bytes, sending_len: %u\n", window, sock->sending_len);
 
 
 
     // Send data as long as there's space in the window
     while (window > 0 && sock->sending_len > 0)
     {
-        fprintf(stderr, "in while loop\n");
+        //fprintf(stderr, "in while loop\n");
         
         uint32_t to_send = MIN(MSS, MIN(sock->sending_len, window));
 
@@ -603,7 +601,7 @@
 
         memcpy(payload, sock->sending_buf + offset, payload_len);
 
-        fprintf(stderr, "[CREATE] To send: %u bytes, window: %u\n", to_send, window);
+        //fprintf(stderr, "[CREATE] To send: %u bytes, window: %u\n", to_send, window);
 
         uint8_t *msg = create_packet(
             src, dst, seq, ack, hlen, plen, flags, adv_window, payload, payload_len);
@@ -613,14 +611,14 @@
         free(payload);
 
 
-        fprintf(stderr, "[SEND_DATA] Sending data seq=%u, len=%u\n", seq, payload_len);
+        //fprintf(stderr, "[SEND_DATA] Sending data seq=%u, len=%u\n", seq, payload_len);
 
         // Adjust the sending buffer after sending a packet
         sock->send_win.last_sent += to_send;
         window -= to_send;
         sock->sending_len -= to_send;
 
-        fprintf(stderr, "End of while loop, remaining window: %u\n", window);
+        //fprintf(stderr, "End of while loop, remaining window: %u\n", window);
 
     }
     
@@ -659,7 +657,7 @@
      {
        if (!sock->fin_acked)
        {
-        fprintf(stderr, "SENDING FIN\n");
+        //fprintf(stderr, "SENDING FIN\n");
           sock->sent_fin = 1;
          send_empty(sock, FIN_FLAG_MASK, false, true);
        }
