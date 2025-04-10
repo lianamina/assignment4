@@ -68,6 +68,7 @@ typedef struct {
   bool send_syn;      // Specifies whether to send a SYN packet for initialization.
   bool recv_fin;      // Indicates whether a FIN packet has been received from the peer.
   bool fin_acked;     // Indicates whether a previously sent FIN packet has been acknowledged.
+  bool sent_fin;     // Indicates whether you have sent a FIN packet.
 
   uint32_t send_fin_seq;
   uint32_t recv_fin_seq;

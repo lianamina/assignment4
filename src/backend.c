@@ -47,7 +47,7 @@
    uint16_t payload_len = 0;
    uint8_t *payload = &flags;
    uint16_t plen = hlen + payload_len;
-   fprintf(stderr, "[DEBUG] send_empty flags: 0x%x\n", flags);
+   //fprintf(stderr, "[DEBUG] send_empty flags: 0x%x\n", flags);
 
    uint8_t *msg = create_packet(
        src, dst, seq, ack, hlen, plen, flags, adv_window, payload, payload_len);
@@ -186,39 +186,54 @@
          // Reset duplicate ACK count
         sock->dup_ack_count = 0;
 
-        // // Update the congestion window based on the state
-        // if (sock->cong_win < sock->slow_start_thresh)
-        // {
-        //     // Slow start: Increase congestion window by MSS
-        //     sock->cong_win += MSS;
+        // Update the congestion window based on the state
+        if (sock->cong_win < sock->slow_start_thresh)
+        {
+            // Slow start: Increase congestion window by MSS
+            sock->cong_win += MSS;
 
-        //     // Transition to congestion avoidance if threshold reached
-        //     // if (sock->cong_win >= sock->slow_start_thresh)
-        //     // {
-        //     //     sock->slow_start_thresh = sock->cong_win;
-        //     // }
-        // }
-        // else
-        // {
-        //     // Congestion avoidance: Additive increase
-        //     sock->cong_win += (MSS * MSS) / sock->cong_win;
-        // }
+            //Transition to congestion avoidance if threshold reached
+            if (sock->cong_win >= sock->slow_start_thresh)
+            {
+                sock->slow_start_thresh = sock->cong_win;
+            }
+        }
+        else
+        {
+            // Congestion avoidance
+            sock->cong_win += (MSS * MSS) / sock->cong_win;
+        }
 
         // Update sender window
         uint32_t prev_ack = sock->send_win.last_ack;
         sock->send_win.last_ack = ack - 1;
 
-        uint32_t offset = ack - prev_ack;
-        if (offset > 0 && sock->sending_buf != NULL) {
-            if (offset <= sock->sending_len) {
-                // Move unacknowledged data to the beginning of the sending buffer
-                memmove(sock->sending_buf, sock->sending_buf + offset, sock->sending_len - offset);
-                sock->sending_len -= offset;
-                fprintf(stderr, "[HANDLE_ACK] After memmove: sending_len=%u\n", sock->sending_len);
-            } else {
-                fprintf(stderr, "[ERROR] ACK offset %u exceeds sending_len %u\n", offset, sock->sending_len);
-                sock->sending_len = 0;  // Safe reset
-            }
+        //malloc new piece of mem
+        // compy from recv ack to end of old buffer into new buffer
+        // free old buffer
+        // update sending len to whatever space is left in the new buffer
+
+        // How many bytes were ACKed
+        uint32_t acked_bytes = ack - prev_ack;
+
+        if (acked_bytes >= sock->sending_len)
+        {
+            // All data acknowledged, clean up
+            free(sock->sending_buf);
+            sock->sending_buf = NULL;
+            sock->sending_len = 0;
+        }
+        else
+        {
+            // Not all data ACKed, keep the rest
+            uint32_t new_len = sock->sending_len - acked_bytes;
+            char *new_buf = malloc(new_len);
+            memcpy(new_buf, sock->sending_buf + acked_bytes, new_len);
+
+            // Replace old buffer with new one
+            free(sock->sending_buf);
+            sock->sending_buf = new_buf;
+            sock->sending_len = new_len;
         }
 
         pthread_mutex_unlock(&(sock->send_lock));
@@ -379,16 +394,19 @@
 
       // Send ACK for FIN
       send_empty(sock, ACK_FLAG_MASK, true, false);
+      fprintf(stderr, "here\n");
+      if (sock->recv_fin = 1) {
+        sock->sent_fin = 1;
+        fprintf(stderr, "[HANDLE_PKT] Server sending FIN...\n");
+        send_empty(sock, FIN_FLAG_MASK, false, true);
+      }
     }
 
-
-    // update to be MAX_NETWORK_BUFFER - (last_recv - last_read)?
-    // The sender updates the advertised window (sock->send_adv_win) as it processes incoming data.
     sock->send_adv_win = advertised_window;
 
     if (flags & ACK_FLAG_MASK) {
         // Case 1: ACK after sending FIN
-        if (sock->recv_fin == 1) {
+        if (sock->sent_fin == 1) {
             fprintf(stderr, "[HANDLE_PKT] Received ACK for our FIN\n");
             sock->fin_acked = 1;
         }
@@ -399,27 +417,27 @@
         }
         // Fast retransmit logic
 
-        // else if (ack == sock->send_win.last_ack) {
-        //     // Duplicate ACK handling
-        //     sock->dup_ack_count++;
-        //     if (sock->dup_ack_count == 3) {
-        //         fprintf(stderr, "[HANDLE_PKT] Fast retransmit triggered\n");
-        //         // TODO: Implement fast retransmit logic
-        //     }
+        else if (ack == sock->send_win.last_ack) {
+            // Duplicate ACK handling
+            sock->dup_ack_count++;
+            if (sock->dup_ack_count == 3) {
+                fprintf(stderr, "[HANDLE_PKT] Fast retransmit triggered\n");
+                // TODO: Implement fast retransmit logic
+            }
 
-        // }
+        }
 
     }
 
     
     update_received_buf(sock, pkt);
     
+    
  }
 
  void recv_pkts(ut_socket_t *sock)
  {
     
-    fprintf(stderr, "In recv_pkts\n");
    ut_tcp_header_t hdr;
    uint8_t *pkt;
    socklen_t conn_len = sizeof(sock->conn);
@@ -449,20 +467,20 @@
      // PART 3 CODE
 
 
-        // while (pthread_mutex_lock(&(sock->send_lock)) != 0) {}
+        while (pthread_mutex_lock(&(sock->send_lock)) != 0) {}
 
         // // Reset duplicated ACK count
-        // sock->dup_ack_count = 0;
+        sock->dup_ack_count = 0;
 
-        // // Reset congestion window and slow start threshold
-        // sock->cong_win = MSS;
-        // sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
+        // Reset congestion window and slow start threshold
+        sock->cong_win = MSS;
+        sock->slow_start_thresh = MAX(sock->cong_win / 2, MSS);
 
-        // // Retransmit missing packets (Go-back-N)
-        // sock->send_win.last_sent = sock->send_win.last_ack;
-        // send_pkts_data(sock);
+        // Retransmit missing packets (Go-back-N)
+        sock->send_win.last_sent = sock->send_win.last_ack;
+        send_pkts_data(sock);
 
-        // pthread_mutex_unlock(&(sock->send_lock));
+        pthread_mutex_unlock(&(sock->send_lock));
    }
 
    if (len >= (ssize_t)sizeof(ut_tcp_header_t))
@@ -551,7 +569,7 @@
 
 
     // Send data as long as there's space in the window
-    while (window > 0)
+    while (window > 0 && sock->sending_len > 0)
     {
         fprintf(stderr, "in while loop\n");
 
@@ -601,10 +619,10 @@
           return;
       }
 
-      if (offset + payload_len > sock->sending_len) {
-          fprintf(stderr, "[ERROR] Buffer overflow detected while preparing payload\n");
-          return;
-      }
+      // if (offset + payload_len > sock->sending_len) {
+      //     fprintf(stderr, "[ERROR] Buffer overflow detected while preparing payload\n");
+      //     return;
+      // }
 
 
         memcpy(payload, sock->sending_buf + offset, payload_len);
@@ -622,8 +640,8 @@
 
         sendto(sockfd, msg, plen, 0, (struct sockaddr *)&(sock->conn), conn_len);
         free(msg);
-        free(sock->sending_buf);
-        sock->sending_buf = NULL;
+        // free(sock->sending_buf);
+        // sock->sending_buf = NULL;
 
 
         fprintf(stderr, "[SEND_DATA] Sending data seq=%u, len=%u\n", seq, payload_len);
@@ -633,13 +651,12 @@
         window -= to_send;
         
         // Safely update sending_len
-        if (sock->sending_len >= to_send) {
+        // if (sock->sending_len >= to_send) {
             sock->sending_len -= to_send;
-        } else {
-            fprintf(stderr, "[WARNING] sending_len underflow detected! Resetting to 0.\n");
-            sock->sending_len = 0;
-        }
-        //sock->sending_buf += to_send;
+        // } else {
+        //     fprintf(stderr, "[WARNING] sending_len underflow detected! Resetting to 0.\n");
+        //     sock->sending_len = 0;
+        // }
 
         fprintf(stderr, "End of while loop, window: %u\n", window);
 
@@ -681,6 +698,8 @@
      {
        if (!sock->fin_acked)
        {
+        fprintf(stderr, "SENDING FIN\n");
+          sock->sent_fin = 1;
          send_empty(sock, FIN_FLAG_MASK, false, true);
        }
      }

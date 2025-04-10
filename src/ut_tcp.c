@@ -53,6 +53,7 @@ int ut_socket(ut_socket_t *sock, const ut_socket_type_t socket_type,
   sock->send_adv_win = 1;
   sock->recv_fin = 0;
   sock->fin_acked = 0;
+  sock->sent_fin = 0;
   sock->dup_ack_count = 0;
   sock->cong_win = WINDOW_INITIAL_WINDOW_SIZE;
   sock->slow_start_thresh = WINDOW_INITIAL_SSTHRESH;
