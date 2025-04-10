@@ -279,7 +279,7 @@
     uint32_t seq = get_seq(header);
     uint16_t plen = get_plen(header);
     uint16_t hlen = get_hlen(header);
-    uint32_t len = get_payload_len(header);  // Actual data length
+    uint16_t len = get_payload_len(pkt);  // Actual data length
     uint8_t *data = get_payload(pkt);
 
     if (len == 0) return;
@@ -299,6 +299,12 @@
         return;
     }
 
+    // fprintf(stderr, "[DEBUG] payload as chars: ");
+    // for (int i = 0; i < len; i++) {
+    //     fprintf(stderr, "%c", data[i]);
+    // }
+    // fprintf(stderr, "\n");
+
     // Reallocate buffer to fit new data
     sock->received_buf = realloc(sock->received_buf, sock->received_len + len);
     if (!sock->received_buf) {
@@ -308,10 +314,18 @@
 
     fprintf(stderr, "[RECV_BUF] Allocating receive buffer of size %u\n", sock->received_len + len);
 
+    // fprintf(stderr, "[DEBUG] payload as chars: ");
+    // for (int i = 0; i < len; i++) {
+    //     fprintf(stderr, "%c", data[i]);
+    // }
+    // fprintf(stderr, "\n");
+
+    
 
     // Copy payload into receive buffer
     memcpy(sock->received_buf + sock->received_len, data, len);
     sock->received_len += len;
+    
 
     // Advance expected sequence number
     sock->recv_win.next_expect += len;
@@ -319,8 +333,7 @@
     // Update last received seq
     sock->recv_win.last_recv = sock->recv_win.next_expect - 1;
 
-    fprintf(stderr, "[RECV_BUF] Allocating receive buffer of size %u\n", sock->received_len + len);
-
+    fprintf(stderr, "[RECV_BUF] Total received buffer length is now %u\n", sock->received_len);
 
     // Send ACK for the new data
     send_empty(sock, ACK_FLAG_MASK, false, false);
@@ -575,18 +588,26 @@
       
         // actual packet we want to send to sending buffer
         uint16_t payload_len = to_send;
-        sock->sending_buf = malloc(payload_len);
-        if (!sock->sending_buf) {
-            perror("[SEND_DATA] Failed to allocate sending_buf");
+        uint16_t plen = hlen + payload_len;
+
+        uint8_t *payload = malloc(payload_len);
+        if (!payload) {
+            perror("[SEND_DATA] Failed to allocate payload");
             return;
         }
-        uint8_t *payload = sock->sending_buf;
-        uint16_t plen = hlen + payload_len;
+        uint32_t offset = sock->send_win.last_sent - sock->send_win.last_ack;
+        memcpy(payload, sock->sending_buf + offset, payload_len);
 
         fprintf(stderr, "[CREATE] To send: %u bytes, window: %u\n", to_send, window);
 
         uint8_t *msg = create_packet(
             src, dst, seq, ack, hlen, plen, flags, adv_window, payload, payload_len);
+
+        // fprintf(stderr, "[BEFORE SEND] Show payload as chars: ");
+        // for (int i = 0; i < payload_len; i++) {
+        //     fprintf(stderr, "%c", payload[i]);
+        // }
+        // fprintf(stderr, "\n");
 
         sendto(sockfd, msg, plen, 0, (struct sockaddr *)&(sock->conn), conn_len);
         free(msg);
@@ -660,10 +681,10 @@
        break;
      }
      send_pkts(sock);
-     fprintf(stderr, "[RECV] Waiting for packet...\n");
+     //fprintf(stderr, "[RECV] Waiting for packet...\n");
 
      recv_pkts(sock);
-     fprintf(stderr, "[RECV] Packet received: %u bytes\n", buf_len);
+     //fprintf(stderr, "[RECV] Packet received: %u bytes\n", buf_len);
 
      while (pthread_mutex_lock(&(sock->recv_lock)) != 0)
      {
