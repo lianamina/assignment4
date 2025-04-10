@@ -277,21 +277,34 @@
 
     ut_tcp_header_t *header = (ut_tcp_header_t *)pkt;
     uint32_t seq = get_seq(header);
-    uint32_t len = get_plen(header);
+    uint16_t plen = get_plen(header);
+    uint16_t hlen = get_hlen(header);
+    uint32_t len = get_payload_len(header);  // Actual data length
     uint8_t *data = get_payload(pkt);
 
     if (len == 0) return;
 
     fprintf(stderr, "[RECV_BUF] Received pkt seq=%u, len=%u, expected=%u\n", seq, len, sock->recv_win.next_expect);
 
-    // Only accept data if it matches what we're expecting
-    if (seq != sock->recv_win.next_expect) {
-      fprintf(stderr, "[RECV_BUF] Dropping out-of-order packet. Expected %u but got %u\n", sock->recv_win.next_expect, seq);
-        return;  // out-of-order, drop it
+    // Drop if it doesn't fit in buffer
+    if (sock->received_len + len > MAX_NETWORK_BUFFER) {
+        fprintf(stderr, "[RECV_BUF] Drop: Would exceed MAX_NETWORK_BUFFER\n");
+        return;
     }
 
-    // Grow buffer if needed
+    // Only accept in-order packets for now
+    if (seq != sock->recv_win.next_expect) {
+        fprintf(stderr, "[RECV_BUF] Dropping out-of-order packet. Expected %u but got %u\n",
+                sock->recv_win.next_expect, seq);
+        return;
+    }
+
+    // Reallocate buffer to fit new data
     sock->received_buf = realloc(sock->received_buf, sock->received_len + len);
+    if (!sock->received_buf) {
+        perror("realloc failed");
+        exit(EXIT_FAILURE);
+    }
 
     fprintf(stderr, "[RECV_BUF] Allocating receive buffer of size %u\n", sock->received_len + len);
 
