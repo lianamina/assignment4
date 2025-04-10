@@ -156,8 +156,6 @@
             // Flow control
             sock->send_adv_win = get_advertised_window(hdr);
 
-            // do not recv_win.next_expect here, it was set during SYN
-
             sock->complete_init = true;
             //fprintf(stderr, "[HANDSHAKE] Handshake complete: complete_init = true\n");
         }
@@ -286,30 +284,24 @@
     uint32_t seq = get_seq(header);
     uint16_t plen = get_plen(header);
     uint16_t hlen = get_hlen(header);
-    uint16_t len = get_payload_len(pkt);  // Actual data length
+    // actual data length
+    uint16_t len = get_payload_len(pkt);
     uint8_t *data = get_payload(pkt);
 
     if (len == 0) return;
 
     //fprintf(stderr, "[RECV_BUF] Received pkt seq=%u, len=%u, expected=%u\n", seq, len, sock->recv_win.next_expect);
 
-    // Drop if it doesn't fit in buffer
+
     if (sock->received_len + len > MAX_NETWORK_BUFFER) {
         //fprintf(stderr, "[RECV_BUF] Drop: Would exceed MAX_NETWORK_BUFFER\n");
         return;
     }
 
-    // Only accept in-order packets for now
     if (seq != sock->recv_win.next_expect) {
         //fprintf(stderr, "[RECV_BUF] Dropping out-of-order packet. Expected %u but got %u\n", sock->recv_win.next_expect, seq);
         return;
     }
-
-    // fprintf(stderr, "[DEBUG] payload as chars: ");
-    // for (int i = 0; i < len; i++) {
-    //     fprintf(stderr, "%c", data[i]);
-    // }
-    // fprintf(stderr, "\n");
 
     // Reallocate buffer to fit new data
     sock->received_buf = realloc(sock->received_buf, sock->received_len + len);
@@ -317,15 +309,6 @@
         perror("realloc failed");
         exit(EXIT_FAILURE);
     }
-
-    //fprintf(stderr, "[RECV_BUF] Allocating receive buffer of size %u\n", sock->received_len + len);
-
-    // fprintf(stderr, "[DEBUG] payload as chars: ");
-    // for (int i = 0; i < len; i++) {
-    //     fprintf(stderr, "%c", data[i]);
-    // }
-    // fprintf(stderr, "\n");
-
     
 
     // Copy payload into receive buffer
@@ -423,9 +406,7 @@
 
     }
 
-    
     update_received_buf(sock, pkt);
-    
     
  }
 
@@ -508,7 +489,7 @@
    * We provide an example of sending a SYN packet by the initiator below:
    */
     if (sock->complete_init) {
-      // Handshake already complete, nothing to send
+      // Handshake already complete
       return;
     }
 
@@ -521,8 +502,7 @@
       // Waits for SYN+ACK and then sends ACK handled in handle_pkt_handshake()
     }
     else if (sock->type == TCP_LISTENER) {
-      // Listener passively waits — all responses triggered in handle_pkt_handshake()
-      // No need to send anything actively here
+      // Listener waits
     }
  }
 
@@ -553,11 +533,10 @@
         uint32_t available_data = sock->send_win.last_write - sock->send_win.last_sent;
         window = MIN(window, available_data);
     } else {
-        return; // Nothing to send
+        return;
     }
     
     //fprintf(stderr, "[SEND_DATA] Window: %u bytes, sending_len: %u\n", window, sock->sending_len);
-
 
 
     // Send data as long as there's space in the window
@@ -567,7 +546,6 @@
         
         uint32_t to_send = MIN(MSS, MIN(sock->sending_len, window));
 
-        // comment out to keep looping
         if (to_send == 0) break;
 
         // Create a packet to send based on the available window
@@ -581,7 +559,6 @@
         uint16_t dst = ntohs(sock->conn.sin_port);
 
 
-        // be updating received len somewhere (REPLACE)
         //fprintf(stderr, "[REC LEN] Can send: %u bytes, received_len: %u\n", window, sock->received_len);
 
         uint16_t adv_window = MAX(MSS, MAX_NETWORK_BUFFER - (sock->recv_win.last_recv - sock->recv_win.last_read));
