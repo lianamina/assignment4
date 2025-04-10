@@ -394,7 +394,6 @@
         }
         // Case 2: ACK for data
         else if (ack > sock->send_win.last_ack) {
-            // gets here but not inside???
             fprintf(stderr, "before handle ack\n");
             handle_ack(sock, hdr);
         }
@@ -596,6 +595,18 @@
             return;
         }
         uint32_t offset = sock->send_win.last_sent - sock->send_win.last_ack;
+
+      if (sock->sending_buf == NULL) {
+          fprintf(stderr, "[ERROR] sending_buf is NULL, cannot send data\n");
+          return;
+      }
+
+      if (offset + payload_len > sock->sending_len) {
+          fprintf(stderr, "[ERROR] Buffer overflow detected while preparing payload\n");
+          return;
+      }
+
+
         memcpy(payload, sock->sending_buf + offset, payload_len);
 
         fprintf(stderr, "[CREATE] To send: %u bytes, window: %u\n", to_send, window);
